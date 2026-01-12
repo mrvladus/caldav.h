@@ -1,4 +1,4 @@
-## caldav.h - Header-only C/C++ CalDAV client library.
+## caldav.h - Header-only C/C++ CalDAV client library
 
 A minimal CalDAV client for C and C++ projects.
 The only dependency is `libcurl` for making HTTP requests.
