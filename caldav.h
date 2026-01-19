@@ -101,6 +101,8 @@ struct CalDAVCalendar {
   CalDAVClient *client;
   // URL of the calendar resource on the server
   char *href;
+  // UID of the calendar
+  char *uid;
   // Human-readable name of the calendar
   char *display_name;
   // Optional description of the calendar
@@ -144,40 +146,40 @@ struct CalDAVEvent {
 // ---------- API ---------- //
 
 // Create a new CalDAV client instance
+// note: The client must be freed with `caldav_client_free()`
 // `base_url`: URL of the CalDAV server (e.g., "https://caldav.example.com" or "example.com")
 // `username`: Authentication username
 // `password`: Authentication password
 // return: New `CalDAVClient` instance, or `NULL` on failure
-// note: The client must be freed with `caldav_client_free()`
 CalDAVClient *caldav_client_new(const char *base_url, const char *username, const char *password);
 
 // Free a CalDAV client and all associated resources
-// `c`: Client instance to free
 // note: This also frees all calendars and events managed by this client
+// `c`: Client instance to free
 void caldav_client_free(CalDAVClient *c);
 
 // Synchronize calendars with the server
 // Downloads calendar list and updates local state
-// `c`: Client instance
 // note: This resets the `properties_changed` and `events_changed` flags on calendars and removes calendars marked as
+// `c`: Client instance
 // `deleted`
 void caldav_client_pull_calendars(CalDAVClient *c);
 
 // Create a new calendar on the server
+// note: The calendar will be added to the client's calendars list on success
 // `c`: Client instance
 // `uid`: Unique identifier for the new calendar
 // `display_name`: Human-readable name for the calendar
 // `description`: Optional description of the calendar (can be `NULL`)
 // `color`: Optional color in hex format (e.g., "#FF0000FF") (can be `NULL`)
 // return: `true` if successful, `false` on failure
-// note: The calendar will be added to the client's calendars list on success
 bool caldav_client_create_calendar(CalDAVClient *c, const char *uid, const char *display_name, const char *description,
                                    const char *color, CalDAVComponentSet set);
 
 // Synchronize events for a specific calendar with the server
 // Downloads event list and updates local state
-// `c`: Calendar instance
 // note: Marked as `deleted` events are removed from the calendar's events list
+// `c`: Calendar instance
 void caldav_calendar_pull_events(CalDAVCalendar *c);
 
 // Update calendar information on the server
@@ -189,9 +191,9 @@ void caldav_calendar_pull_events(CalDAVCalendar *c);
 bool caldav_calendar_update(CalDAVCalendar *c, const char *display_name, const char *description, const char *color);
 
 // Delete a calendar from the server
+// note: The calendar will be marked as deleted and removed on next pull
 // `c`: Calendar instance to delete
 // return: `true` if successful, `false` on failure
-// note: The calendar will be marked as deleted and removed on next pull
 bool caldav_calendar_delete(CalDAVCalendar *c);
 
 // Print calendar information to stdout for debugging
@@ -199,11 +201,11 @@ bool caldav_calendar_delete(CalDAVCalendar *c);
 void caldav_calendar_print(CalDAVCalendar *c);
 
 // Create a new event in a calendar on the server
+// note: The event will be added to the calendar's events list on success
 // `c`: Calendar instance
 // `uid`: Unique identifier for the new event
 // `ical`: iCalendar data for the event (RFC 5545 format)
 // return: `true` if successful, `false` on failure
-// note: The event will be added to the calendar's events list on success
 bool caldav_calendar_create_event(CalDAVCalendar *c, const char *uid, const char *ical);
 
 // Update an event on the server
@@ -213,9 +215,10 @@ bool caldav_calendar_create_event(CalDAVCalendar *c, const char *uid, const char
 bool caldav_event_update(CalDAVEvent *e, const char *ical);
 
 // Delete an event from the server and mark it as deleted if successful
-// `e`: Event instance to delete
 // note: The event will be removed on next pull
-void caldav_event_delete(CalDAVEvent *e);
+// `e`: Event instance to delete
+// return: `true` if successful, `false` on failure
+bool caldav_event_delete(CalDAVEvent *e);
 
 // Print event information to stdout for debugging
 // `e`: Event instance to print
@@ -232,6 +235,134 @@ void caldav_event_print(CalDAVEvent *e);
 // ------------------------------------------------------------ //
 
 #ifdef CALDAV_IMPLEMENTATION
+
+/*
+
+DESCRIPTION:
+
+    da.h - Dynamic array.
+
+LICENSE:
+
+    Copyright (c) 2026 Vlad Krupinskii <mrvladus@yandex.ru>
+
+    This software is provided 'as-is', without any express or implied
+    warranty. In no event will the authors be held liable for any damages
+    arising from the use of this software.
+
+    Permission is granted to anyone to use this software for any purpose,
+    including commercial applications, and to alter it and redistribute it
+    freely, subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not
+    claim that you wrote the original software. If you use this software
+    in a product, an acknowledgment in the product documentation would be
+    appreciated but is not required.
+    2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+    3. This notice may not be removed or altered from any source distribution.
+
+*/
+
+#ifndef DA_H
+#define DA_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stddef.h>
+#include <stdlib.h>
+
+#define DA_CALLOC  CALDAV_CALLOC_FUNC
+#define DA_REALLOC CALDAV_REALLOC_FUNC
+#define DA_FREE    CALDAV_FREE_FUNC
+
+// Declare new array with the variable "name" and item type "T"
+#define da_new(name, T)                                                                                                \
+  struct {                                                                                                             \
+    size_t count;                                                                                                      \
+    size_t capacity;                                                                                                   \
+    T *items;                                                                                                          \
+  } name = {0}
+
+#define da_count(da)           ((da)->count)
+#define da_at(da, idx)         ((da)->items[(idx)])
+#define da_first(da)           ((da)->items)
+#define da_last(da)            ((da)->items[(da)->count - 1])
+#define da_foreach(T, var, da) for (T *var = da_first(da); var < (da)->items + da_count(da); ++var)
+
+// Reserve memory for N elements in the array
+#define da_reserve(da, N)                                                                                              \
+  do {                                                                                                                 \
+    (da)->capacity += (N) > 0 ? (N) : (da)->capacity;                                                                  \
+    (da)->items = DA_REALLOC((da)->items, sizeof(*(da)->items) * (da)->capacity);                                      \
+  } while (0)
+
+#define da_add(da, item)                                                                                               \
+  do {                                                                                                                 \
+    if (da_count(da) == (da)->capacity) da_reserve(da, (da)->capacity ? (da)->capacity * 2 : 8);                       \
+    da_at(da, da_count(da)++) = (item);                                                                                \
+  } while (0)
+
+#define da_remove(da, idx)                                                                                             \
+  do {                                                                                                                 \
+    if ((idx) < da_count(da)) {                                                                                        \
+      for (size_t _i = (idx); _i + 1 < da_count(da); ++_i) da_at(da, _i) = da_at(da, _i + 1);                          \
+      --da_count(da);                                                                                                  \
+    }                                                                                                                  \
+  } while (0)
+
+#define da_remove_full(da, idx, item_free_func)                                                                        \
+  do {                                                                                                                 \
+    if ((idx) < da_count(da)) {                                                                                        \
+      item_free_func(da_at(da, idx));                                                                                  \
+      da_remove(da, idx);                                                                                              \
+    }                                                                                                                  \
+  } while (0)
+
+#define da_remove_fast(da, idx)                                                                                        \
+  do {                                                                                                                 \
+    if ((idx) < da_count(da) - 1) da_at(da, idx) = da_last(da);                                                        \
+    da_count(da)--;                                                                                                    \
+  } while (0)
+
+#define da_remove_fast_full(da, idx, item_free_func)                                                                   \
+  do {                                                                                                                 \
+    item_free_func(da_at(da, idx));                                                                                    \
+    da_remove_fast(da, idx);                                                                                           \
+  } while (0)
+
+#define da_find(da, item, idx_ptr)                                                                                     \
+  do {                                                                                                                 \
+    for (size_t _i = 0; _i < da_count(da); _i++) {                                                                     \
+      if (da_at(da, _i) == (item)) {                                                                                   \
+        *(idx_ptr) = _i;                                                                                               \
+        break;                                                                                                         \
+      }                                                                                                                \
+    }                                                                                                                  \
+    *(idx_ptr) = -1;                                                                                                   \
+  } while (0)
+
+#define da_free(da)                                                                                                    \
+  do {                                                                                                                 \
+    DA_FREE((da)->items);                                                                                              \
+    (da)->items = NULL;                                                                                                \
+    (da)->count = 0;                                                                                                   \
+    (da)->capacity = 0;                                                                                                \
+  } while (0)
+
+#define da_free_full(da, item_free_func)                                                                               \
+  do {                                                                                                                 \
+    for (size_t _i = 0; _i < (da)->count; ++_i) item_free_func(da_at(da, _i));                                         \
+    da_free(da);                                                                                                       \
+  } while (0)
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // DA_H
 
 #define XML_H_IMPLEMENTATION
 #define XML_H_API static
@@ -679,65 +810,6 @@ XML_H_API void xml_node_free(XMLNode *node) {
     }                                                                                                                  \
   } while (0)
 
-#define ASSERT assert
-
-// ---------- DYNAMIC ARRAY ---------- //
-
-#define da_declare(name, item_type)                                                                                    \
-  typedef struct {                                                                                                     \
-    size_t count;                                                                                                      \
-    size_t capacity;                                                                                                   \
-    item_type items;                                                                                                   \
-  } name
-
-#define da_reserve(array, n_items)                                                                                     \
-  do {                                                                                                                 \
-    if ((array)->capacity < (array)->count + (n_items)) {                                                              \
-      (array)->capacity = (array)->capacity ? (array)->capacity * 2 : 16;                                              \
-      (array)->items = CALDAV_REALLOC_FUNC((array)->items, (array)->capacity * sizeof(*(array)->items));               \
-    }                                                                                                                  \
-  } while (0)
-
-#define da_append(array, item)                                                                                         \
-  do {                                                                                                                 \
-    da_reserve((array), 1);                                                                                            \
-    (array)->items[(array)->count++] = (item);                                                                         \
-  } while (0)
-
-#define da_remove(array, idx)                                                                                          \
-  do {                                                                                                                 \
-    if ((idx) < (array)->count) {                                                                                      \
-      (array)->count--;                                                                                                \
-      memmove((array)->items + (idx), (array)->items + (idx) + 1, ((array)->count - (idx)) * sizeof(*(array)->items)); \
-    }                                                                                                                  \
-  } while (0)
-
-#define da_at(array, idx) ((array)->items[idx])
-
-#define da_find(array, item, idx_ptr)                                                                                  \
-  do {                                                                                                                 \
-    for (size_t i = 0; i < (array)->count; i++) {                                                                      \
-      if (da_at(array, i) == (item)) {                                                                                 \
-        *(idx_ptr) = i;                                                                                                \
-        break;                                                                                                         \
-      }                                                                                                                \
-    }                                                                                                                  \
-    *(idx_ptr) = -1;                                                                                                   \
-  } while (0)
-
-#define da_free(array)                                                                                                 \
-  do {                                                                                                                 \
-    if ((array)->items) CALDAV_FREE_FUNC((void *)(array)->items);                                                      \
-  } while (0)
-
-#define da_free_with_func(array, data_free_func)                                                                       \
-  do {                                                                                                                 \
-    if ((array)->items) {                                                                                              \
-      for (size_t i = 0; i < (array)->length; i++) data_free_func((array)->items[i]);                                  \
-      CALDAV_FREE_FUNC((array)->items);                                                                                \
-    }                                                                                                                  \
-  } while (0)
-
 // ---------- STRING BUILDER ---------- //
 
 typedef struct {
@@ -836,14 +908,27 @@ static inline char *caldav__url_https(const char *url) {
 static inline char *caldav__extract_base_url(const char *url) {
   if (!url) return NULL;
   const char *protocol_end = strstr(url, "://");
+  if (!protocol_end) return NULL;
   const char *host_end = strchr(protocol_end + 3, '/');
-  if (host_end) {
-    size_t len = host_end - url;
-    char *base_url = (char *)malloc(sizeof(char *) * (len + 1));
-    strncpy(base_url, url, len);
-    base_url[len] = '\0';
-    return base_url;
-  } else return CALDAV_STRDUP_FUNC(url);
+  return host_end ? caldav__strdup_printf("%.*s", host_end - url, url) : CALDAV_STRDUP_FUNC(url);
+}
+
+static char *caldav__calendar_uid_from_href(const char *href) {
+  char *last_slash = strchr(href, '/');
+  bool ends_with_slash = false;
+  while (last_slash) {
+    char *next_slash = strchr(last_slash + 1, '/');
+    if (!next_slash) break;
+    if (*(next_slash + 1) == '\0') {
+      ends_with_slash = true;
+      break;
+    }
+    last_slash = next_slash;
+  }
+  char *out = caldav__strdup_printf("%s", last_slash + 1);
+  if (ends_with_slash) out[strlen(out) - 1] = '\0';
+
+  return out;
 }
 
 // ---------- FIND FUNCTIONS ---------- //
@@ -912,6 +997,7 @@ static char *caldav_request(CalDAVClient *c, const char *url, const char *method
   if (c->password) curl_easy_setopt(curl, CURLOPT_PASSWORD, c->password);
   if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
   CURLcode res = curl_easy_perform(curl);
+  caldav__log("Status code: %d", res);
   if (res != CURLE_OK) {
     caldav__log("Request failed: %s", curl_easy_strerror(res));
     curl_easy_cleanup(curl);
@@ -963,7 +1049,7 @@ static char *caldav__request_autodiscover(const char *url) {
 
 static char *caldav__request_principal(CalDAVClient *c, const char *url) {
   if (!c || !url) return NULL;
-  caldav__log("Getting principal URL");
+  caldav__log("Getting principal URL for %s", url);
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Depth: 0");
   headers = curl_slist_append(headers, "Prefer: return-minimal");
@@ -976,24 +1062,34 @@ static char *caldav__request_principal(CalDAVClient *c, const char *url) {
                      "</propfind>";
   char *https = caldav__url_https(url);
   char *http = caldav__url_http(url);
+  const char *effective_url = NULL;
   char *response = NULL;
   response = caldav_request(c, https, "PROPFIND", headers, body, NULL);
-  if (!response) response = caldav_request(c, http, "PROPFIND", headers, body, NULL);
+  if (!response) {
+    response = caldav_request(c, http, "PROPFIND", headers, body, NULL);
+    effective_url = http;
+  } else effective_url = https;
   curl_slist_free_all(headers);
-  CALDAV_FREE(http);
-  CALDAV_FREE(https);
-  if (!response) return NULL;
+  if (!response) {
+    CALDAV_FREE(http);
+    CALDAV_FREE(https);
+    return NULL;
+  }
   // Parse response
   XMLNode *root = xml_parse_string(response);
   CALDAV_FREE(response);
   if (!root) return NULL;
   XMLNode *multistatus = xml_node_child_at(root, 0);
   if (!multistatus || multistatus->children->len == 0) {
+    CALDAV_FREE(http);
+    CALDAV_FREE(https);
     xml_node_free(root);
     return NULL;
   }
   XMLNode *response_node = xml_node_child_at(multistatus, 0);
   if (!response_node) {
+    CALDAV_FREE(http);
+    CALDAV_FREE(https);
     xml_node_free(root);
     return NULL;
   }
@@ -1001,11 +1097,16 @@ static char *caldav__request_principal(CalDAVClient *c, const char *url) {
   if (!status || strcmp(status->text, "HTTP/1.1 200 OK") != 0) return NULL;
   XMLNode *href = xml_node_find_tag(response_node, "propstat/prop/current-user-principal/href", false);
   if (!href || !href->text) {
+    CALDAV_FREE(http);
+    CALDAV_FREE(https);
     xml_node_free(root);
     return NULL;
   }
-  char *base_url = caldav__extract_base_url(url);
+  char *base_url = caldav__extract_base_url(effective_url);
+  assert(base_url);
   char *res = caldav__strdup_printf("%s%s", base_url, href->text);
+  CALDAV_FREE(http);
+  CALDAV_FREE(https);
   CALDAV_FREE(base_url);
   xml_node_free(root);
   caldav__log("Principal URL: %s", res);
@@ -1379,14 +1480,14 @@ void caldav_client_pull_calendars(CalDAVClient *c) {
         if (ctag) CALDAV_REPLACE_STRING(existing_calendar->ctag, c_tag);
         existing_calendar->events_changed = true;
       }
-      da_append(&new_calendars, existing_calendar);
+      da_add(&new_calendars, existing_calendar);
     } else {
       // Create calendar
       CalDAVCalendar *new_cal = caldav__calendar_new(c, set, url, name, desc, color, c_tag);
       new_cal->events_changed = true;
       new_cal->properties_changed = true;
-      da_append(c->calendars, new_cal);
-      da_append(&new_calendars, new_cal);
+      da_add(c->calendars, new_cal);
+      da_add(&new_calendars, new_cal);
     }
     CALDAV_FREE(url);
   }
@@ -1424,6 +1525,7 @@ static CalDAVCalendar *caldav__calendar_new(CalDAVClient *client, CalDAVComponen
   calendar->color = color ? CALDAV_STRDUP_FUNC(color) : NULL;
   calendar->ctag = ctag ? CALDAV_STRDUP_FUNC(ctag) : NULL;
   calendar->events = CALDAV_CALLOC_FUNC(1, sizeof(*(calendar->events)));
+  calendar->uid = caldav__calendar_uid_from_href(calendar->href);
 
   return calendar;
 }
@@ -1459,12 +1561,13 @@ void caldav_calendar_print(CalDAVCalendar *c) {
 
 bool caldav_calendar_delete(CalDAVCalendar *c) {
   if (!c) return false;
-  bool success = false;
-  char *response = caldav_request(c->client, c->href, "DELETE", NULL, NULL, &success);
+  caldav__log("Deleting calendar %s", c->href);
+  bool res = false;
+  char *response = caldav_request(c->client, c->href, "DELETE", NULL, NULL, &res);
   CALDAV_FREE(response);
-  if (!success) return false;
+  if (!res) return false;
   c->deleted = true;
-  return false;
+  return true;
 }
 
 void caldav_calendar_pull_events(CalDAVCalendar *c) {
@@ -1503,12 +1606,12 @@ void caldav_calendar_pull_events(CalDAVCalendar *c) {
     if (existing_event) {
       if (strcmp(etag->text, existing_event->etag) != 0) {
         CALDAV_REPLACE_STRING(existing_event->etag, etag->text);
-        da_append(&changed, existing_event);
+        da_add(&changed, existing_event);
       }
     } else {
       CalDAVEvent *event = caldav__event_new(c, url, NULL, etag->text);
-      da_append(&changed, event);
-      da_append(c->events, event);
+      da_add(&changed, event);
+      da_add(c->events, event);
     }
     CALDAV_FREE(url);
   }
@@ -1640,13 +1743,14 @@ void caldav_event_print(CalDAVEvent *e) {
          e->href, e->etag, e->deleted ? "true" : "false", e->ical);
 }
 
-void caldav_event_delete(CalDAVEvent *e) {
-  if (!e) return;
+bool caldav_event_delete(CalDAVEvent *e) {
+  if (!e) return false;
   caldav__log("Deleting event: %s", e->href);
   bool res = false;
   caldav_request(e->calendar->client, e->href, "DELETE", NULL, NULL, &res);
-  if (!res) return;
+  if (!res) return false;
   e->deleted = true;
+  return true;
 }
 
 bool caldav_event_update(CalDAVEvent *e, const char *ical) {
@@ -1656,8 +1760,8 @@ bool caldav_event_update(CalDAVEvent *e, const char *ical) {
   caldav_request(e->calendar->client, e->href, "PUT", NULL, ical, &res);
   if (!res) return false;
   CalDAVEvents evs = {0};
-  da_append(&evs, e);
-  char *response = caldav_request_calendar_multiget(e->calendar, NULL);
+  da_add(&evs, e);
+  char *response = caldav_request_calendar_multiget(e->calendar, &evs);
   da_free(&evs);
   if (!response) return false;
   XMLNode *root = xml_parse_string(response);
