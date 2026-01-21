@@ -113,9 +113,6 @@ struct CalDAVCalendar {
   char *ctag;
   // Bitmask of supported component types
   CalDAVComponentSet component_set;
-  // Set to `true` if the calendar has been created or its properties have been modified on server
-  // Reset to `false` when calling `caldav_client_pull_calendars()`
-  bool properties_changed;
   // Set to `true` if the calendar has been created or modified on server
   // Reset to `false` when calling `caldav_client_pull_calendars()`
   bool events_changed;
@@ -1398,7 +1395,6 @@ void caldav_client_pull_calendars(CalDAVClient *c) {
   for (size_t i = 0; i < c->calendars->count; ++i) {
     CalDAVCalendar *calendar = da_at(c->calendars, i);
     calendar->events_changed = false;
-    calendar->properties_changed = false;
     if (calendar->deleted) {
       da_remove(c->calendars, i);
       i--;
@@ -1471,10 +1467,7 @@ void caldav_client_pull_calendars(CalDAVClient *c) {
           props_changed = true;
         }
       }
-      if (props_changed) {
-        existing_calendar->properties_changed = true;
-        caldav__log("Calendar properties is changed: %s", url);
-      }
+      if (props_changed) caldav__log("Calendar properties is changed: %s", url);
       if (c_tag && strcmp(ctag->text, existing_calendar->ctag) != 0) {
         caldav__log("Calendar events is changed: %s", url);
         if (ctag) CALDAV_REPLACE_STRING(existing_calendar->ctag, c_tag);
@@ -1485,16 +1478,19 @@ void caldav_client_pull_calendars(CalDAVClient *c) {
       // Create calendar
       CalDAVCalendar *new_cal = caldav__calendar_new(c, set, url, name, desc, color, c_tag);
       new_cal->events_changed = true;
-      new_cal->properties_changed = true;
       da_add(c->calendars, new_cal);
       da_add(&new_calendars, new_cal);
     }
     CALDAV_FREE(url);
   }
   // Deleted calendars
-  for (size_t i = 0; i < new_calendars.count; ++i) {
-    CalDAVCalendar *cal = da_at(&new_calendars, i);
-    if (!caldav__find_calendar_by_href(c->calendars, cal->href)) cal->deleted = true;
+  for (size_t i = 0; i < c->calendars->count; ++i) {
+    CalDAVCalendar *cal = da_at(c->calendars, i);
+    CalDAVCalendar *existing_cal = caldav__find_calendar_by_href(&new_calendars, cal->href);
+    if (!existing_cal) {
+      caldav__log("Calendar was deleted: %s", cal->href);
+      cal->deleted = true;
+    }
   }
   da_free(&new_calendars);
   xml_node_free(root);
@@ -1552,11 +1548,9 @@ void caldav_calendar_print(CalDAVCalendar *c) {
          "Display Name: %s\n"
          "Description: %s\n"
          "Color: %s\n"
-         "Properties Changed: %s\n"
          "Events Changed: %s\n"
          "------------------------------\n",
-         c->href, c->ctag, c->display_name, c->description, c->color, c->properties_changed ? "true" : "false",
-         c->events_changed ? "true" : "false");
+         c->href, c->ctag, c->display_name, c->description, c->color, c->events_changed ? "true" : "false");
 }
 
 bool caldav_calendar_delete(CalDAVCalendar *c) {
