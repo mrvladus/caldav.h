@@ -994,7 +994,6 @@ static char *caldav_request(CalDAVClient *c, const char *url, const char *method
   if (c->password) curl_easy_setopt(curl, CURLOPT_PASSWORD, c->password);
   if (body) curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
   CURLcode res = curl_easy_perform(curl);
-  caldav__log("Status code: %d", res);
   if (res != CURLE_OK) {
     caldav__log("Request failed: %s", curl_easy_strerror(res));
     curl_easy_cleanup(curl);
@@ -1185,7 +1184,7 @@ static bool caldav_request_create_calendar(CalDAVClient *c, const char *uid, con
   headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
   const char *body_template =
       "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-      "<create xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:ical=\"http://apple.com/ns/ical/\" "
+      "<d:mkcol xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:ical=\"http://apple.com/ns/ical/\" "
       "xmlns:oc=\"http://owncloud.org/ns\">"
       "  <d:set>"
       "    <d:prop>"
@@ -1200,7 +1199,7 @@ static bool caldav_request_create_calendar(CalDAVClient *c, const char *uid, con
       "      <oc:calendar-enabled>1</oc:calendar-enabled>"
       "    </d:prop>"
       "  </d:set>"
-      "</create>";
+      "</d:mkcol>";
   StringBuilder sb = {0};
   if (set & CALDAV_COMPONENT_SET_VEVENT) sb_append(&sb, "<c:comp name=\"VEVENT\"/>");
   if (set & CALDAV_COMPONENT_SET_VTODO) sb_append(&sb, "<c:comp name=\"VTODO\"/>");
@@ -1252,7 +1251,6 @@ static bool caldav_request_calendar_update(CalDAVCalendar *c, const char *displa
 }
 
 static char *caldav_request_calendar_get_etags(CalDAVCalendar *c) {
-  caldav__log("Request: ETags");
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Depth: 1");
   headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
@@ -1271,7 +1269,6 @@ static char *caldav_request_calendar_get_etags(CalDAVCalendar *c) {
 }
 
 static char *caldav_request_calendar_get_props(CalDAVCalendar *c) {
-  caldav__log("Request: Calendar properties");
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Depth: 0");
   headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
@@ -1291,7 +1288,6 @@ static char *caldav_request_calendar_get_props(CalDAVCalendar *c) {
 }
 
 static char *caldav_request_calendar_multiget(CalDAVCalendar *c, CalDAVEvents *events) {
-  caldav__log("Request: calendar-multiget calendar-data");
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Depth: 1");
   headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
@@ -1308,7 +1304,6 @@ static char *caldav_request_calendar_multiget(CalDAVCalendar *c, CalDAVEvents *e
 }
 
 static char *caldav_request_calendar_multiget_etags(CalDAVCalendar *c, CalDAVEvents *events) {
-  caldav__log("Request: calendar-multiget etag");
   struct curl_slist *headers = NULL;
   headers = curl_slist_append(headers, "Depth: 1");
   headers = curl_slist_append(headers, "Content-Type: application/xml; charset=utf-8");
@@ -1417,7 +1412,8 @@ void caldav_client_pull_calendars(CalDAVClient *c) {
   CalDAVCalendars new_calendars = {0};
   for (size_t i = 0; i < multistatus->children->len; ++i) {
     XMLNode *res = xml_node_child_at(multistatus, i);
-    if (!xml_node_find_tag(res, "propstat/prop/resourcetype/calendar", false)) continue; // Not a calendar
+    if (!xml_node_find_tag(res, "propstat/prop/resourcetype/calendar", false)) continue;        // Not a calendar
+    if (xml_node_find_tag(res, "propstat/prop/resourcetype/deleted-calendar", false)) continue; // Deleted
     XMLNode *status = xml_node_find_tag(res, "propstat/status", false);
     if (!status || strcmp(status->text, "HTTP/1.1 200 OK") != 0) continue;
     XMLNode *component_set = xml_node_find_tag(res, "propstat/prop/supported-calendar-component-set", false);
