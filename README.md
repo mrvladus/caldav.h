@@ -1,3 +1,6 @@
+> [!WARNING]
+> Work in progress. API is unstable.
+
 ## caldav.h - Header-only C/C++ CalDAV client library
 
 A minimal CalDAV client for C and C++ projects.
